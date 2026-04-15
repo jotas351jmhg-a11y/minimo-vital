@@ -1,0 +1,13 @@
+# Base de datos — contiene datos sensibles (cédulas, deudas, direcciones)
+# Se distribuye por separado cada periodo de facturación
+base_usuarios.json
+
+# Archivos de desarrollo local
+servidor_mv.py
+instalar_dependencias.bat
+INSTRUCCIONES.md
+
+# Sistema operativo
+.DS_Store
+Thumbs.db
+desktop.ini
