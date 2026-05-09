@@ -11,11 +11,8 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <title>Mínimo Vital — Aguas de Barrancabermeja</title>
 <style>
-  /* Fuente del sistema — funciona offline, carga instantánea */
-  :root { --font-main: system-ui, -apple-system, 'Segoe UI', sans-serif; }
-</style>
-<style>
 :root {
+  --font-main: system-ui, -apple-system, 'Segoe UI', sans-serif;
   --azul:#0A3D6B; --azul2:#1565a8; --azul50:#E6F1FB;
   --verde:#1D9E75; --verde50:#E1F5EE; --verde-dk:#0F6E56;
   --amber:#BA7517; --amber50:#FAEEDA;
@@ -710,23 +707,14 @@ window.addEventListener('load', async () => {
       toast('Base migrada correctamente');
     } catch(e) { console.warn('Error migrando base legacy:', e); }
   }
-  // Cargar base desde IDB a memoria
+  let idbCount = 0;
   if (fotoDB) {
     try {
-      const count = await new Promise((resolve) => {
-        const tx = fotoDB.transaction('suscriptores', 'readonly');
-        const req = tx.objectStore('suscriptores').count();
-        req.onsuccess = () => resolve(req.result);
-        req.onerror = () => resolve(0);
-      });
-      if (count > 0) {
-        console.log('Base disponible en IDB:', count, 'suscriptores');
-        // No cargar a DB en memoria — usar IDB directamente en búsquedas
-      }
+      idbCount = await contarSuscriptoresIDB();
+      if (idbCount > 0) console.log('Base disponible en IDB:', idbCount, 'suscriptores');
     } catch(e) { console.warn('Error verificando IDB:', e); }
   }
-  // Fallback: intentar cargar base_usuarios.json si IDB está vacía
-  if (!fotoDB || await contarSuscriptoresIDB() === 0) {
+  if (!fotoDB || idbCount === 0) {
     try {
       const res = await fetch('base_usuarios.json');
       if (res.ok) {
@@ -754,7 +742,7 @@ function goto(id) {
   const scrollable = screen.querySelector('.form-scroll, .busq-wrap, .list-body, .det-scroll, .success-wrap');
   if (scrollable) scrollable.scrollTop = 0;
   screen.scrollTop = 0;
-  if (id==='s-home') updateHome();
+  if (id==='s-home') void updateHome();
   if (id==='s-lista') renderLista();
 }
 
@@ -845,7 +833,7 @@ async function buscarUsuario() {
   noEnc.style.display = 'none';
   enc.style.display = 'none';
 
-  if (!id) { toast('Ingrese un número de ID'); return; }
+  if (!id) { markError('busq-id', 'Ingrese un número de ID'); return; }
 
   // Buscar en IDB primero, fallback a DB en memoria
   let user = await buscarEnIDB(id) || DB[id] || DB[id.padStart(6,'0')] ||
@@ -1493,7 +1481,7 @@ function sincronizar() {
   localStorage.setItem('mv_last_sync', now);
   document.getElementById('last-sync').textContent = now;
   toast(`${pend} registro(s) sincronizados`);
-  updateHome();
+  void updateHome();
 }
 
 // ============================================================
@@ -1529,7 +1517,7 @@ function procesarNuevaBase(event) {
       const data = JSON.parse(e.target.result);
       const total = Object.keys(data).length;
       if (total === 0) { toast('Archivo inválido — sin registros'); return; }
-      DB = data; // mantener en memoria para la sesión actual
+      DB = data;
       toast('Importando base... un momento');
       await importarBaseIDB(data);
       // Extraer periodo del nombre del archivo
@@ -1541,7 +1529,7 @@ function procesarNuevaBase(event) {
         cargada: new Date().toLocaleDateString('es-CO', {day:'2-digit', month:'short', year:'numeric'})
       };
       localStorage.setItem('mv_base_meta', JSON.stringify(meta));
-      updateDbInfo();
+      void updateDbInfo();
       toast(`Base guardada: ${total.toLocaleString('es-CO')} suscriptores`);
     } catch(err) {
       console.error(err);
@@ -1557,7 +1545,7 @@ function procesarNuevaBase(event) {
 function initDB() {
   return new Promise((resolve) => {
     if (fotoDB) { resolve(fotoDB); return; }
-    const req = indexedDB.open('mv-fotos-db', 2); // versión 2
+    const req = indexedDB.open('mv-fotos-db', 2);
     req.onupgradeneeded = (e) => {
       const db = e.target.result;
       if (!db.objectStoreNames.contains('fotos')) {
@@ -1607,16 +1595,12 @@ function idbGetByIndex(index, value) {
 
 async function buscarEnIDB(query) {
   if (!fotoDB) return null;
-  const tx = fotoDB.transaction('suscriptores', 'readonly');
-  const store = tx.objectStore('suscriptores');
+  // Each await needs a fresh transaction — IDB auto-commits when request queue empties
+  const st = () => fotoDB.transaction('suscriptores', 'readonly').objectStore('suscriptores');
   const id = query.replace(/^0+/, '');
-  let user = await idbGet(store, id);
-  if (!user) user = await idbGet(store, id.padStart(6, '0'));
-  if (!user) {
-    const idx = store.index('por_cedula');
-    user = await idbGetByIndex(idx, query);
-  }
-  return user;
+  return await idbGet(st(), id)
+    || await idbGet(st(), id.padStart(6, '0'))
+    || await idbGetByIndex(st().index('por_cedula'), query);
 }
 
 async function contarSuscriptoresIDB() {
@@ -1716,9 +1700,9 @@ let destinoCampo = null;
 
 async function irACampo(destino) {
   destinoCampo = destino;
-  const total = await contarSuscriptoresIDB();
-  const pendientes = registros.filter(r => !r.sincronizado).length;
   const meta = JSON.parse(localStorage.getItem('mv_base_meta') || 'null');
+  const total = meta?.total || 0;
+  const pendientes = registros.filter(r => !r.sincronizado).length;
 
   const checks = [
     {
